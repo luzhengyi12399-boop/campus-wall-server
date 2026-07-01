@@ -1,102 +1,189 @@
 const express = require('express');
 const db = require('../database');
 const { authMiddleware } = require('../auth');
-const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
-// List orders
-router.get('/', authMiddleware, (req, res) => {
-  const { type, status, page = 1, limit = 20 } = req.query;
-  let sql = `
-    SELECT o.*, 
-      buyer.nickName as buyerName, buyer.avatarUrl as buyerAvatar,
-      seller.nickName as sellerName, seller.avatarUrl as sellerAvatar
-    FROM orders o
-    JOIN users buyer ON o.buyerId = buyer.id
-    JOIN users seller ON o.sellerId = seller.id
-    WHERE o.buyerId = ? OR o.sellerId = ?
-  `;
-  const params = [req.userId, req.userId];
-  if (status) {
-    sql += ' AND o.status = ?';
-    params.push(status);
+// Create order
+router.post('/', authMiddleware, (req, res) => {
+  const { itemId, address } = req.body;
+  if (!itemId) {
+    return res.status(400).json({ code: 400, message: 'Item ID required' });
   }
-  sql += ' ORDER BY o.createdAt DESC LIMIT ? OFFSET ?';
-  params.push(parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
-  const orders = db.prepare(sql).all(...params);
-  res.json({ code: 0, data: orders });
-});
 
-// Create order (buy item)
-router.post('/buy', authMiddleware, (req, res) => {
-  const { itemId } = req.body;
   const item = db.prepare('SELECT * FROM items WHERE id = ?').get(itemId);
   if (!item) {
     return res.status(404).json({ code: 404, message: 'Item not found' });
   }
-  if (item.status !== 'available') {
+  if (item.status !== 'selling') {
     return res.status(400).json({ code: 400, message: 'Item not available' });
   }
   if (item.userId === req.userId) {
     return res.status(400).json({ code: 400, message: 'Cannot buy own item' });
   }
+
   const buyer = db.prepare('SELECT wallet FROM users WHERE id = ?').get(req.userId);
-  if (buyer.wallet < item.price) {
+  if (!buyer || buyer.wallet < item.price) {
     return res.status(400).json({ code: 400, message: 'Insufficient balance' });
   }
-  const id = uuidv4();
+
+  const id = 'O' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const now = Date.now();
-  db.prepare('INSERT INTO orders (id, buyerId, sellerId, itemId, amount, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, req.userId, item.userId, itemId, item.price, 'pending', now, now);
-  db.prepare('UPDATE items SET status = ? WHERE id = ?').run('reserved', itemId);
-  res.json({ code: 0, data: { id } });
+
+  // Deduct buyer wallet
+  db.prepare('UPDATE users SET wallet = wallet - ? WHERE id = ?').run(item.price, req.userId);
+  db.prepare(`
+    INSERT INTO wallet_history (userId, type, amount, balanceAfter, description, relatedId, createdAt)
+    VALUES (?, 'deduct', ?, ?, 'Order payment', ?, ?)
+  `).run(req.userId, item.price, buyer.wallet - item.price, id, now);
+
+  // Mark item as sold
+  db.prepare('UPDATE items SET status = ? WHERE id = ?').run('sold', itemId);
+
+  db.prepare(`
+    INSERT INTO orders (id, itemId, buyerId, sellerId, price, status, address, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, itemId, req.userId, item.userId, item.price, 'paid', address || '', now);
+
+  // Notify seller
+  db.prepare(`
+    INSERT INTO notifications (userId, type, title, content, data, createdAt)
+    VALUES (?, 'order', '新订单', '您有新的订单', ?, ?)
+  `).run(item.userId, JSON.stringify({ orderId: id }), now);
+
+  res.json({ code: 0, data: { id }, message: 'Order created' });
 });
 
-// Pay order
-router.post('/:id/pay', authMiddleware, (req, res) => {
+// List my orders (as buyer or seller)
+router.get('/', authMiddleware, (req, res) => {
+  const { type, status, page = 1, limit = 20 } = req.query;
+  const offset = (page - 1) * limit;
+
+  let query = `
+    SELECT o.*, i.title as itemTitle, i.images as itemImages,
+           b.nickName as buyerName, b.avatarUrl as buyerAvatar,
+           s.nickName as sellerName, s.avatarUrl as sellerAvatar
+    FROM orders o
+    JOIN items i ON o.itemId = i.id
+    JOIN users b ON o.buyerId = b.id
+    JOIN users s ON o.sellerId = s.id
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (type === 'buyer') {
+    query += ' AND o.buyerId = ?';
+    params.push(req.userId);
+  } else if (type === 'seller') {
+    query += ' AND o.sellerId = ?';
+    params.push(req.userId);
+  } else {
+    query += ' AND (o.buyerId = ? OR o.sellerId = ?)';
+    params.push(req.userId, req.userId);
+  }
+
+  if (status) {
+    query += ' AND o.status = ?';
+    params.push(status);
+  }
+
+  query += ' ORDER BY o.createdAt DESC LIMIT ? OFFSET ?';
+  params.push(parseInt(limit), parseInt(offset));
+
+  const orders = db.prepare(query).all(...params);
+
+  orders.forEach(order => {
+    try {
+      order.itemImages = JSON.parse(order.itemImages || '[]');
+    } catch (e) {
+      order.itemImages = [];
+    }
+  });
+
+  res.json({ code: 0, data: orders });
+});
+
+// Get order detail
+router.get('/:id', authMiddleware, (req, res) => {
+  const order = db.prepare(`
+    SELECT o.*, i.title as itemTitle, i.images as itemImages, i.description as itemDescription,
+           b.nickName as buyerName, b.avatarUrl as buyerAvatar,
+           s.nickName as sellerName, s.avatarUrl as sellerAvatar
+    FROM orders o
+    JOIN items i ON o.itemId = i.id
+    JOIN users b ON o.buyerId = b.id
+    JOIN users s ON o.sellerId = s.id
+    WHERE o.id = ? AND (o.buyerId = ? OR o.sellerId = ?)
+  `).get(req.params.id, req.userId, req.userId);
+
+  if (!order) {
+    return res.status(404).json({ code: 404, message: 'Order not found' });
+  }
+
+  try {
+    order.itemImages = JSON.parse(order.itemImages || '[]');
+  } catch (e) {
+    order.itemImages = [];
+  }
+
+  res.json({ code: 0, data: order });
+});
+
+// Ship order
+router.post('/:id/ship', authMiddleware, (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
   if (!order) {
     return res.status(404).json({ code: 404, message: 'Order not found' });
   }
-  if (order.buyerId !== req.userId) {
-    return res.status(403).json({ code: 403, message: 'Not your order' });
+  if (order.sellerId !== req.userId) {
+    return res.status(403).json({ code: 403, message: 'Not seller' });
   }
-  if (order.status !== 'pending') {
-    return res.status(400).json({ code: 400, message: 'Order not pending' });
+  if (order.status !== 'paid') {
+    return res.status(400).json({ code: 400, message: 'Order not in paid status' });
   }
-  const buyer = db.prepare('SELECT wallet FROM users WHERE id = ?').get(req.userId);
-  if (buyer.wallet < order.amount) {
-    return res.status(400).json({ code: 400, message: 'Insufficient balance' });
-  }
-  const now = Date.now();
-  // Deduct from buyer
-  db.prepare('UPDATE users SET wallet = wallet - ? WHERE id = ?').run(order.amount, req.userId);
-  db.prepare('INSERT INTO wallet_history (userId, type, amount, balance, description, relatedId, createdAt) VALUES (?, ?, ?, (SELECT wallet FROM users WHERE id = ?), ?, ?, ?)')
-    .run(req.userId, 'expense', -order.amount, req.userId, 'Order payment', order.id, now);
-  // Add to seller (escrow - hold until confirmed)
-  db.prepare('UPDATE orders SET status = ?, updatedAt = ? WHERE id = ?').run('paid', now, req.params.id);
-  res.json({ code: 0, message: 'Payment successful' });
+
+  db.prepare('UPDATE orders SET status = ?, shippedAt = ? WHERE id = ?')
+    .run('shipped', Date.now(), req.params.id);
+
+  // Notify buyer
+  db.prepare(`
+    INSERT INTO notifications (userId, type, title, content, data, createdAt)
+    VALUES (?, 'order', '订单已发货', '您的订单已发货', ?, ?)
+  `).run(order.buyerId, JSON.stringify({ orderId: order.id }), Date.now());
+
+  res.json({ code: 0, message: 'Order shipped' });
 });
 
-// Confirm receipt (buyer confirms, release to seller)
+// Confirm receipt
 router.post('/:id/confirm', authMiddleware, (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
   if (!order) {
     return res.status(404).json({ code: 404, message: 'Order not found' });
   }
   if (order.buyerId !== req.userId) {
-    return res.status(403).json({ code: 403, message: 'Not your order' });
+    return res.status(403).json({ code: 403, message: 'Not buyer' });
   }
-  if (order.status !== 'paid') {
-    return res.status(400).json({ code: 400, message: 'Order not paid' });
+  if (order.status !== 'shipped') {
+    return res.status(400).json({ code: 400, message: 'Order not shipped' });
   }
-  const now = Date.now();
-  db.prepare('UPDATE users SET wallet = wallet + ? WHERE id = ?').run(order.amount, order.sellerId);
-  db.prepare('INSERT INTO wallet_history (userId, type, amount, balance, description, relatedId, createdAt) VALUES (?, ?, ?, (SELECT wallet FROM users WHERE id = ?), ?, ?, ?)')
-    .run(order.sellerId, 'income', order.amount, order.sellerId, 'Order income', order.id, now);
-  db.prepare('UPDATE orders SET status = ?, updatedAt = ? WHERE id = ?').run('completed', now, req.params.id);
-  db.prepare('UPDATE items SET status = ? WHERE id = ?').run('sold', order.itemId);
+
+  const seller = db.prepare('SELECT wallet FROM users WHERE id = ?').get(order.sellerId);
+  db.prepare('UPDATE users SET wallet = wallet + ? WHERE id = ?').run(order.price, order.sellerId);
+
+  db.prepare(`
+    INSERT INTO wallet_history (userId, type, amount, balanceAfter, description, relatedId, createdAt)
+    VALUES (?, 'add', ?, ?, 'Order income', ?, ?)
+  `).run(order.sellerId, order.price, (seller.wallet || 0) + order.price, order.id, Date.now());
+
+  db.prepare('UPDATE orders SET status = ?, completedAt = ? WHERE id = ?')
+    .run('completed', Date.now(), req.params.id);
+
+  // Notify seller
+  db.prepare(`
+    INSERT INTO notifications (userId, type, title, content, data, createdAt)
+    VALUES (?, 'order', '订单已完成', '买家已确认收货，资金已到账', ?, ?)
+  `).run(order.sellerId, JSON.stringify({ orderId: order.id }), Date.now());
+
   res.json({ code: 0, message: 'Order confirmed' });
 });
 

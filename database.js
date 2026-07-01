@@ -24,6 +24,10 @@ function initDatabase() {
       twoFAEnabled INTEGER DEFAULT 0,
       wallet REAL DEFAULT 0,
       schoolId TEXT,
+      bio TEXT,
+      gender TEXT,
+      grade TEXT,
+      creditScore REAL DEFAULT 100,
       createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000),
       updatedAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
     )
@@ -106,7 +110,7 @@ function initDatabase() {
     )
   `);
 
-  // Items table (marketplace)
+  // Items (market) table
   db.exec(`
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
@@ -115,9 +119,10 @@ function initDatabase() {
       title TEXT NOT NULL,
       description TEXT,
       price REAL NOT NULL,
-      category TEXT,
       images TEXT,
-      status TEXT DEFAULT 'available',
+      category TEXT,
+      condition TEXT,
+      status TEXT DEFAULT 'selling',
       createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
     )
   `);
@@ -131,11 +136,14 @@ function initDatabase() {
       title TEXT NOT NULL,
       description TEXT,
       reward REAL NOT NULL,
-      category TEXT,
       status TEXT DEFAULT 'open',
-      assigneeId TEXT,
-      createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000),
-      completedAt INTEGER
+      channel TEXT DEFAULT 'school',
+      images TEXT,
+      acceptedBy TEXT,
+      acceptedAt INTEGER,
+      submittedAt INTEGER,
+      completedAt INTEGER,
+      createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
     )
   `);
 
@@ -143,21 +151,23 @@ function initDatabase() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS orders (
       id TEXT PRIMARY KEY,
+      itemId TEXT NOT NULL,
       buyerId TEXT NOT NULL,
       sellerId TEXT NOT NULL,
-      itemId TEXT,
-      taskId TEXT,
-      amount REAL NOT NULL,
+      price REAL NOT NULL,
       status TEXT DEFAULT 'pending',
-      createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000),
-      updatedAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
+      address TEXT,
+      shippedAt INTEGER,
+      completedAt INTEGER,
+      createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
     )
   `);
 
   // Messages table
   db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chatId TEXT NOT NULL,
       senderId TEXT NOT NULL,
       receiverId TEXT NOT NULL,
       content TEXT NOT NULL,
@@ -175,7 +185,7 @@ function initDatabase() {
       type TEXT NOT NULL,
       title TEXT NOT NULL,
       content TEXT,
-      relatedId TEXT,
+      data TEXT,
       read INTEGER DEFAULT 0,
       createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
     )
@@ -185,11 +195,11 @@ function initDatabase() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS friend_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      senderId TEXT NOT NULL,
-      receiverId TEXT NOT NULL,
+      fromUserId TEXT NOT NULL,
+      toUserId TEXT NOT NULL,
       status TEXT DEFAULT 'pending',
       createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000),
-      UNIQUE(senderId, receiverId)
+      UNIQUE(fromUserId, toUserId)
     )
   `);
 
@@ -211,7 +221,7 @@ function initDatabase() {
       userId TEXT NOT NULL,
       type TEXT NOT NULL,
       amount REAL NOT NULL,
-      balance REAL NOT NULL,
+      balanceAfter REAL NOT NULL,
       description TEXT,
       relatedId TEXT,
       createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
@@ -223,8 +233,8 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS reports (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       reporterId TEXT NOT NULL,
-      targetType TEXT NOT NULL,
       targetId TEXT NOT NULL,
+      targetType TEXT NOT NULL,
       reason TEXT NOT NULL,
       status TEXT DEFAULT 'pending',
       createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
@@ -236,10 +246,8 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS groups (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      description TEXT,
       avatar TEXT,
-      creatorId TEXT NOT NULL,
-      schoolId TEXT,
+      createdBy TEXT NOT NULL,
       createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
     )
   `);
@@ -260,36 +268,30 @@ function initDatabase() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS chat_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      userId1 TEXT NOT NULL,
-      userId2 TEXT NOT NULL,
-      lastMessageId TEXT,
-      lastMessageAt INTEGER DEFAULT (strftime('%s', 'now') * 1000),
-      unread1 INTEGER DEFAULT 0,
-      unread2 INTEGER DEFAULT 0,
-      UNIQUE(userId1, userId2)
+      chatId TEXT NOT NULL UNIQUE,
+      type TEXT DEFAULT 'private',
+      lastMessage TEXT,
+      lastMessageAt INTEGER,
+      unreadCount INTEGER DEFAULT 0,
+      participantIds TEXT
     )
   `);
 
   // Create indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_users_school ON users(schoolId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_posts_school ON posts(schoolId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_posts_user ON posts(userId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_items_user ON items(userId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_items_school ON items(schoolId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(userId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_school ON tasks(schoolId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_orders_buyer ON orders(buyerId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_orders_seller ON orders(sellerId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(senderId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiverId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(userId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_wallet_user ON wallet_history(userId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_friends_u1 ON friends(userId1)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_friends_u2 ON friends(userId2)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_school_members ON school_members(schoolId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_group_members ON group_members(groupId)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_sessions ON chat_sessions(userId1, userId2)`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_posts_schoolId ON posts(schoolId)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_posts_userId ON posts(userId)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_items_userId ON items(userId)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_items_schoolId ON items(schoolId)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_userId ON tasks(userId)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_orders_buyerId ON orders(buyerId)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_orders_sellerId ON orders(sellerId)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_messages_chatId ON messages(chatId)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_userId ON notifications(userId)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_wallet_history_userId ON wallet_history(userId)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_friends_userId1 ON friends(userId1)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_friends_userId2 ON friends(userId2)');
+
+  console.log('Database initialized successfully');
 }
 
 initDatabase();
