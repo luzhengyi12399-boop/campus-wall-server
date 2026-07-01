@@ -29,7 +29,7 @@ router.get('/', optionalAuth, (req, res) => {
     query += ' AND i.status = ?';
     params.push(status);
   } else {
-    query += ' AND i.status = "selling"';
+    query += ` AND i.status = 'selling'`;
   }
   if (search) {
     query += ' AND (i.title LIKE ? OR i.description LIKE ?)';
