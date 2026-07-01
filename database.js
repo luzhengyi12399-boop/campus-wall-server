@@ -119,8 +119,10 @@ function initDatabase() {
       title TEXT NOT NULL,
       description TEXT,
       price REAL NOT NULL,
+      originalPrice REAL,
       images TEXT,
       category TEXT,
+      tags TEXT,
       condition TEXT,
       status TEXT DEFAULT 'selling',
       createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
@@ -143,6 +145,8 @@ function initDatabase() {
       acceptedAt INTEGER,
       submittedAt INTEGER,
       completedAt INTEGER,
+      startTime INTEGER,
+      endTime INTEGER,
       createdAt INTEGER DEFAULT (strftime('%s', 'now') * 1000)
     )
   `);
