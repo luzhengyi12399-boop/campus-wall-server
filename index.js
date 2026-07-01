@@ -34,6 +34,7 @@ app.use('/api/friends', require('./routes/friends'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/wallet', require('./routes/wallet'));
 app.use('/api/groups', require('./routes/groups'));
+app.use('/api/qr', require('./routes/qr'));
 
 // File upload route (simple base64 upload for now)
 app.post('/api/upload', authMiddleware, (req, res) => {
