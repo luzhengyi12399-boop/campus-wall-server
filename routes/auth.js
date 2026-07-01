@@ -5,16 +5,34 @@ const { generateToken } = require('../auth');
 
 const router = express.Router();
 
-// Register
+// Register with username + password
 router.post('/register', (req, res) => {
-  const { nickName, phone, password } = req.body;
-  if (!nickName || !phone || !password) {
-    return res.status(400).json({ code: 400, message: 'Missing required fields' });
+  const { username, password, confirmPassword } = req.body;
+
+  // Validate fields
+  if (!username || !password || !confirmPassword) {
+    return res.status(400).json({ code: 400, message: '请填写用户名、密码和确认密码' });
   }
 
-  const existing = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
+  // Username: only letters and numbers, 4-20 chars
+  if (!/^[a-zA-Z0-9]{4,20}$/.test(username)) {
+    return res.status(400).json({ code: 400, message: '用户名只能由4-20位英文或数字组成' });
+  }
+
+  // Password: letters, numbers, punctuation, 6-30 chars
+  if (!/^[a-zA-Z0-9\p{P}]{6,30}$/u.test(password)) {
+    return res.status(400).json({ code: 400, message: '密码只能由6-30位英文、数字或标点符号组成' });
+  }
+
+  // Check confirm password
+  if (password !== confirmPassword) {
+    return res.status(400).json({ code: 400, message: '两次输入的密码不一致' });
+  }
+
+  // Check if username already exists
+  const existing = db.prepare('SELECT id FROM users WHERE nickName = ?').get(username);
   if (existing) {
-    return res.status(409).json({ code: 409, message: 'Phone already registered' });
+    return res.status(409).json({ code: 409, message: '该用户名已被注册' });
   }
 
   const id = 'U' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -22,9 +40,9 @@ router.post('/register', (req, res) => {
   const now = Date.now();
 
   db.prepare(`
-    INSERT INTO users (id, nickName, phone, password, createdAt, updatedAt)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, nickName, phone, hashedPassword, now, now);
+    INSERT INTO users (id, nickName, password, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, username, hashedPassword, now, now);
 
   const token = generateToken(id);
   res.json({
@@ -33,8 +51,7 @@ router.post('/register', (req, res) => {
       token,
       userInfo: {
         id,
-        nickName,
-        phone,
+        nickName: username,
         avatarUrl: '',
         schoolId: '',
         wallet: 0,
@@ -42,25 +59,25 @@ router.post('/register', (req, res) => {
         gender: '',
         grade: '',
         creditScore: 100,
-        phoneBound: true,
+        phoneBound: false,
         passwordSet: true,
         twoFAEnabled: false
       }
     },
-    message: 'Register success'
+    message: '注册成功'
   });
 });
 
-// Login
+// Login with username + password
 router.post('/login', (req, res) => {
-  const { phone, password } = req.body;
-  if (!phone || !password) {
-    return res.status(400).json({ code: 400, message: 'Missing phone or password' });
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ code: 400, message: '请填写用户名和密码' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
+  const user = db.prepare('SELECT * FROM users WHERE nickName = ?').get(username);
   if (!user || !bcrypt.compareSync(password, user.password)) {
-    return res.status(401).json({ code: 401, message: 'Invalid phone or password' });
+    return res.status(401).json({ code: 401, message: '用户名或密码错误' });
   }
 
   const token = generateToken(user.id);
@@ -71,7 +88,6 @@ router.post('/login', (req, res) => {
       userInfo: {
         id: user.id,
         nickName: user.nickName,
-        phone: user.phone,
         avatarUrl: user.avatarUrl || '',
         schoolId: user.schoolId || '',
         wallet: user.wallet || 0,
@@ -79,20 +95,18 @@ router.post('/login', (req, res) => {
         gender: user.gender || '',
         grade: user.grade || '',
         creditScore: user.creditScore || 100,
-        phoneBound: !!user.phone,
-        passwordSet: !!user.password,
-        twoFAEnabled: !!user.twoFAEnabled
+        phoneBound: false,
+        passwordSet: true,
+        twoFAEnabled: false
       }
     },
-    message: 'Login success'
+    message: '登录成功'
   });
 });
 
 // WeChat login (mock - would integrate with WeChat SDK in production)
 router.post('/wx-login', (req, res) => {
   const { code } = req.body;
-  // In production, call WeChat API to exchange code for openid
-  // For now, generate a mock user
   const id = 'U' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const now = Date.now();
 
