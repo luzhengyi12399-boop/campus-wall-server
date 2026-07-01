@@ -51,7 +51,7 @@ router.get('/', (req, res) => {
 
 // Create task
 router.post('/', authMiddleware, (req, res) => {
-  const { title, description, reward, schoolId, channel, images } = req.body;
+  const { title, description, reward, schoolId, channel, images, startTime, endTime } = req.body;
   if (!title || !reward) {
     return res.status(400).json({ code: 400, message: 'Title and reward required' });
   }
@@ -62,7 +62,7 @@ router.post('/', authMiddleware, (req, res) => {
     return res.status(400).json({ code: 400, message: 'Insufficient balance' });
   }
 
-  // Deduct reward from wallet
+  // Deduct reward from wallet (freeze/escrow)
   db.prepare('UPDATE users SET wallet = wallet - ? WHERE id = ?').run(reward, req.userId);
 
   // Record wallet history
@@ -75,9 +75,9 @@ router.post('/', authMiddleware, (req, res) => {
   const now = Date.now();
 
   db.prepare(`
-    INSERT INTO tasks (id, userId, schoolId, title, description, reward, channel, images, status, createdAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
-  `).run(id, req.userId, schoolId || null, title, description || '', reward, channel || (schoolId ? 'school' : 'world'), JSON.stringify(images || []), now);
+    INSERT INTO tasks (id, userId, schoolId, title, description, reward, channel, images, status, startTime, endTime, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)
+  `).run(id, req.userId, schoolId || null, title, description || '', reward, channel || (schoolId ? 'school' : 'world'), JSON.stringify(images || []), startTime || null, endTime || null, now);
 
   res.json({ code: 0, data: { id }, message: 'Task created' });
 });
