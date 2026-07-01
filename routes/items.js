@@ -41,6 +41,15 @@ router.get('/', optionalAuth, (req, res) => {
 
   const items = db.prepare(query).all(...params);
 
+  // Parse images
+  items.forEach(item => {
+    try {
+      item.images = JSON.parse(item.images || '[]');
+    } catch (e) {
+      item.images = [];
+    }
+  });
+
   // Parse images and add seller info
   items.forEach(item => {
     try {
@@ -57,7 +66,7 @@ router.get('/', optionalAuth, (req, res) => {
 
 // Create item
 router.post('/', authMiddleware, (req, res) => {
-  const { title, description, price, images, category, condition, schoolId } = req.body;
+  const { title, description, price, originalPrice, images, category, tags, condition, schoolId } = req.body;
   if (!title || !price) {
     return res.status(400).json({ code: 400, message: 'Title and price required' });
   }
@@ -66,9 +75,9 @@ router.post('/', authMiddleware, (req, res) => {
   const now = Date.now();
 
   db.prepare(`
-    INSERT INTO items (id, userId, schoolId, title, description, price, images, category, condition, status, createdAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'selling', ?)
-  `).run(id, req.userId, schoolId || null, title, description || '', price, JSON.stringify(images || []), category || '', condition || '', now);
+    INSERT INTO items (id, userId, schoolId, title, description, price, originalPrice, images, category, tags, condition, status, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'selling', ?)
+  `).run(id, req.userId, schoolId || null, title, description || '', price, originalPrice || null, JSON.stringify(images || []), category || '', tags || '', condition || '', now);
 
   res.json({ code: 0, data: { id }, message: 'Item created' });
 });
