@@ -44,7 +44,7 @@ router.get('/', optionalAuth, (req, res) => {
     query += ' AND p.schoolId IS NULL';
   }
 
-  query += ' AND p.status = "approved" ORDER BY p.createdAt DESC LIMIT ? OFFSET ?';
+  query += ` AND p.status = 'approved' ORDER BY p.createdAt DESC LIMIT ? OFFSET ?`;
   params.push(parseInt(limit), parseInt(offset));
 
   const posts = db.prepare(query).all(...params);
